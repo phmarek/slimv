@@ -156,6 +156,11 @@ if !exists( 'g:slimv_repl_name' )
     let g:slimv_repl_name = 'REPL'
 endif
 
+" Def buffer name
+if !exists( 'g:slimv_def_name' )
+    let g:slimv_def_name = 'DEF'
+endif
+
 " SLDB buffer name
 if !exists( 'g:slimv_sldb_name' )
     let g:slimv_sldb_name = 'SLDB'
@@ -944,6 +949,29 @@ function SlimvOpenThreadsBuffer()
     execute 'noremap <buffer> <silent> ' . g:slimv_leader.'d      :call SlimvDebugThread()<CR>'
     execute 'noremap <buffer> <silent> ' . g:slimv_leader.'k      :call SlimvKillThread()<CR>'
     execute 'noremap <buffer> <silent> ' . g:slimv_leader.'q      :call SlimvQuitThreads()<CR>'
+endfunction
+
+" Open a new Definitions buffer
+function SlimvOpenDefBuffer()
+    call SlimvOpenBuffer( g:slimv_def_name )
+
+    " Add keybindings valid only for the DEF buffer
+    execute 'noremap <buffer> <silent>        <CR>                j?^{{{?+1<CR>:call SlimvHandleEnterSldb(1)<CR>'
+    execute 'noremap <buffer> <silent> ' . g:slimv_leader.'q      <C-U>:call SlimvRestoreFocus(1)<CR>'
+
+    setlocal conceallevel=3 concealcursor=nc
+    " Set folding parameters
+    "setlocal foldmethod=marker
+    "setlocal foldlevel=1
+    "setlocal foldmarker={{{,}}}
+    "setlocal foldtext=substitute(getline(v:foldstart),'{{{ ','','')
+    call s:SetKeyword()
+
+    syn match Directory   /^\s\+in "\(.*\)" \(line\|byte\) \(\d\+\)$/
+    syn region MoreMsg    matchgroup=Ignore start=/^+ / end=/$/ concealends
+    syn region WarningMsg matchgroup=Ignore start=/^! / end=/$/ concealends
+    syn region Title      matchgroup=Ignore start=/^{{{ / end=/$/ concealends
+    syn region Constant   matchgroup=Ignore start=/^}}}/ end=/$/ concealends
 endfunction
 
 " Open a new SLDB buffer
@@ -2948,6 +2976,19 @@ function! SlimvProfile()
     endif
 endfunction
 
+" Find definitions
+function! SlimvFindDefinitions()
+    if SlimvConnectSwank()
+        "let s = input( '(Un)profile: ', SlimvSelectSymbol() )
+        let s = SlimvSelectSymbol()
+        if s != ''
+            call SlimvCommandUsePackage( 'python swank_find_definition("' . s . '")' )
+            redraw!
+        endif
+    endif
+endfunction
+
+
 " Switch profiling on based on substring
 function! SlimvProfileSubstring()
     if SlimvConnectSwank()
@@ -3487,6 +3528,7 @@ call s:MenuMap( 'Slim&v.De&bugging.Set-&Breakpoint',            g:slimv_leader.'
 call s:MenuMap( 'Slim&v.De&bugging.Break-on-&Exception',        g:slimv_leader.'E',  g:slimv_leader.'de',  ':call SlimvBreakOnException()<CR>' )
 call s:MenuMap( 'Slim&v.De&bugging.Disassemb&le\.\.\.',         g:slimv_leader.'l',  g:slimv_leader.'dd',  ':call SlimvDisassemble()<CR>' )
 call s:MenuMap( 'Slim&v.De&bugging.&Inspect\.\.\.',             g:slimv_leader.'i',  g:slimv_leader.'di',  ':call SlimvInspect()<CR>' )
+call s:MenuMap( 'Slim&v.De&bugging.&Find-Definition\.\.\.',     g:slimv_leader.'»',  g:slimv_leader.'df',  ':call SlimvFindDefinitions()<CR>' )
 call s:MenuMap( 'Slim&v.De&bugging.-SldbSep-',                  '',                  '',                   ':' )
 call s:MenuMap( 'Slim&v.De&bugging.&Abort',                     g:slimv_leader.'a',  g:slimv_leader.'da',  ':call SlimvDebugAbort()<CR>' )
 call s:MenuMap( 'Slim&v.De&bugging.&Quit-to-Toplevel',          g:slimv_leader.'q',  g:slimv_leader.'dq',  ':call SlimvDebugQuit()<CR>' )

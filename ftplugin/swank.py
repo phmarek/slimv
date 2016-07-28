@@ -429,6 +429,69 @@ def swank_parse_inspect_content(pcont):
         vim.command("let b:inspect_more=0")
     vim.command('call SlimvEndUpdate()')
 
+def swank_parse_definition_info(parms, data):
+    """
+    Parse the find-definitions-for-emacs output
+    """
+    global inspect_lines
+    global inspect_newline
+
+    buf = ['-- Definitions', '']
+    #buf.append(str(parms))
+    #buf.append(str(data))
+    found_pos = []
+    for elm in parms:
+        name = elm[0]
+        buf.append('{{{ ' + unquote(name))
+
+        for elm2 in elm[1:]:
+            #buf.append('   + '+ str(elm2))
+            if elm2[0] == ':location':
+                dict_elems = elm2[1:]
+                while 'nil' in dict_elems:
+                    dict_elems.remove('nil')
+                loc = dict(dict_elems)
+                #buf.append('   + '+ str(loc))
+                fil = unquote(loc[':file'])
+                pos = int(loc[':position'])
+                buf.append('    in "%s" byte %d' % (fil, pos))
+                if loc.has_key(':snippet'):
+                    buf.extend(map(lambda l: '+  ' + l, unquote(loc[':snippet']).splitlines()))
+                buf.append('')
+                # add a tuple that can be directly used with %
+                found_pos.append( (pos, fil.replace(' ', '\\ ')) ) 
+            if elm2[0] == ':error':
+                buf.extend(map(lambda l: '!  ' + l, unquote(elm2[1]).splitlines()))
+        #buf[-1] = '}}}'
+        buf.append('}}}')
+
+    # TODO: what to do if multiple definitions are available, but
+    # only one position? Eg. (defun :cl () 1) ...
+    #if len(found_pos) == 1:
+    if len(found_pos) == 1 and os.access(found_pos[0][1], os.R_OK):
+        r = found_pos[0]
+        (pos, fil) = r
+        # bufexists
+        existing_buffer = [b for b in vim.buffers if b.name == fil]
+        if existing_buffer:
+            #vim.command(':msg "going to byte %d in %s (buf %s)"' % (r[0], r[1], str(existing_buffer)))
+            vim.command(':b %d' % existing_buffer[0].number)
+            vim.command(':%dgo' % pos)
+        else:
+            # TODO: opening the file doesn't show the "already opened; abort, read only, ..." message, but waits for a keypress!
+            #lazy_redraw_old = vim.eval("&lazyredraw")
+            #vim.command("set nolazyredraw")
+            #vim.command(':edit +%dgo %s' % r)
+            #if lazy_redraw_old == 1:
+            #    vim.command("set lazyredraw")
+            #vim.command(':redraw!')
+            vim.command(':call feedkeys(":edit +%dgo %s\<CR>", "n")' % r)
+    else:
+        vim.command('call SlimvBeginUpdate()')
+        vim.command('call SlimvOpenDefBuffer()')
+        buffr = vim.current.buffer
+        buffr[:] = buf
+
 def swank_parse_inspect(struct):
     """
     Parse the swank inspector output
@@ -688,6 +751,9 @@ def swank_listen():
                 elif message == ':presentation-start':
                     retval = retval + new_line(retval)
 
+                elif message == ':find-definitions-for-emacs':
+                    print str(r)
+
                 elif message == ':write-string':
                     # REPL has new output to display
                     if len(r) > 2 and r[2] == ':repl-result':
@@ -835,6 +901,8 @@ def swank_listen():
                                     for f in params:
                                         retval = retval + '\n' + '  ' + f
                                     retval = retval + '\n' + get_prompt()
+                                elif action.name == ':find-definitions-for-emacs':
+                                    swank_parse_definition_info(params, action)
                                 elif action.name == ':frame-call':
                                     swank_parse_frame_call(params, action)
                                 elif action.name == ':frame-source-location':
@@ -1130,6 +1198,10 @@ def swank_compile_file(name):
 def swank_load_file(name):
     cmd = '(swank:load-file ' + requote(name) + ')'
     swank_rex(':load-file', cmd, get_package(), 't')
+
+def swank_find_definition(symbol):
+    cmd = '(swank:find-definitions-for-emacs "' + symbol + '")'
+    swank_rex(':find-definitions-for-emacs', cmd, get_package(), 't')
 
 def swank_toggle_profile(symbol):
     cmd = '(swank:toggle-profile-fdefinition "' + symbol + '")'
