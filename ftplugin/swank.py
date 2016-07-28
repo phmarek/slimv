@@ -1126,13 +1126,17 @@ def swank_inspector_pop():
     vim.command('let s:inspect_path = s:inspect_path[:-2]')
     swank_rex(':inspector-pop', '(swank:inspector-pop)', 'nil', 't')
 
-def swank_inspect_in_frame(symbol, n):
+def swank_inspect_in_frame(symbol, n, before):
     key = str(n) + " " + symbol
     if frame_locals.has_key(key):
         cmd = '(swank:inspect-frame-var ' + str(n) + " " + str(frame_locals[key]) + ')'
     else:
         cmd = '(swank:inspect-in-frame "' + symbol + '" ' + str(n) + ')'
-    swank_rex(':inspect-in-frame', cmd, get_swank_package(), current_thread, str(n))
+    if before:
+        after = ")"
+    else:
+        after = ""
+    swank_rex(':inspect-in-frame', before + cmd + after, get_swank_package(), current_thread, str(n))
 
 def swank_inspector_range():
     start = int(vim.eval("b:range_start"))

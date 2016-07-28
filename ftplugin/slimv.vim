@@ -484,6 +484,85 @@ function! SlimvSwankResponse()
     endif
 endfunction
 
+
+"" TODO: store a list of external windows, and use v:count to push data into 
+"" them? ie. 3<leader>ni (or <leader>di?) would use (create) a window 3 and 
+"" show the data there?
+function! SlimvCommandNewWindow( cmd )
+    " TODO: put impl in there, too
+    " TODO: v:count doesn't work yet
+    let servername='SlimV_on__' . g:swank_host . ':' . g:swank_port . '__ExtWin-' . (v:count ? v:count : 1)
+    call system('gvim --servername ' . servername)
+
+    let tries=20
+    while tries > 0
+        try
+            sleep 200m
+            call remote_foreground(servername)
+            break
+        catch /^Vim\%((\a\+)\)\=:E241/
+            let tries = tries - 1
+        endtry
+    endwhile
+    if tries < 0
+        call SlimvErrorWait( 'Cannot start external window.' )
+        return
+    endif
+
+    echo 'Started in external window.'
+    " load SlimV
+    call remote_send(servername, ':setlocal ft=' . SlimvGetFiletype() . '<CR>')
+    " TODO: pass port and host, keybindings, etc?
+    " No base64(enc|dec) in VIM yet ...
+    let cmd = substitute( a:cmd, '"', '\\"', 'g' )
+
+    let s:swank_current_thread = ''
+    python vim.command(":let s:swank_current_thread=" + current_thread)
+
+    call remote_send(servername, ':call SlimvNewWindowInNew( "' . cmd . '","' . s:swank_current_thread . '" )<CR>')
+    return servername
+endfunction
+
+function! SlimvNewWindowInNew( cmd, c_thread)
+    let g:slimv_repl_split=0
+    "echo 'Connecting'
+    let s:refresh_disabled = 1
+    call SlimvConnectServer()
+    python log=1
+    "echo 'Waiting'
+    while 1
+        call SlimvSwankResponse()
+        "echo 'Waiting' . s:swank_actions_pending
+        if ! s:swank_actions_pending
+            break
+        endif
+        sleep 200m
+    endwhile
+
+    "let s:swank_current_thread = 't'
+    "a:c_thread
+    "python current_thread = 't'
+    "vim.eval("s:swank_current_thread")
+    
+    " Set _old_ connection as most recent, so that the SLDB pops up there.
+    if g:slimv_impl == 'sbcl'
+        let cmd = "(cl:if (cl:>= (cl:length swank:*connections*) 2) (cl:rotatef (cl:first swank::*connections*) (cl:second swank::*connections*)))"
+        call SlimvSend( [cmd], 0, 1 )
+    endif
+
+
+    "echo 'Calling'
+    call SlimvBeginUpdate()
+    let s:last_update = -1
+    execute a:cmd
+    "call setline(1, a:cmd)
+    let s:refresh_disabled = 0
+    "echo 'Done.'
+    set nomodified buftype=nofile
+    call SlimvSwankResponse()
+    nnoremap <silent> <buffer> <leader>q :qa<CR>
+endfunction
+
 " Execute the given command and write its output at the end of the REPL buffer
 function! SlimvCommand( cmd )
     silent execute a:cmd
@@ -2873,8 +2952,31 @@ function! SlimvDisassemble()
     endif
 endfunction
 
+function! SlimvInspectInFrame_do(s, frame)
+    call SlimvBeginUpdate()
+    call SlimvCommand( 'python swank_inspect_in_frame("' . a:s . '", ' . a:frame . ', "")' )
+    call SlimvRefreshReplBuffer()
+endfunction
+
+function! SlimvInspectInFrame_do2(s, thread, frame)
+    let before = "(sb-thread:interrupt-thread (cl:find " . a:thread . " (swank-backend:all-threads) :key #'swank-backend:thread-id)"
+    "call SlimvBeginUpdate()
+    call SlimvCommand( 'python swank_inspect_in_frame("' . a:s . '", ' . a:frame . ', "' . before . '")' )
+    call SlimvRefreshReplBuffer()
+endfunction
+
+function! SlimvInspect_do(s, pack)
+    "call SlimvBeginUpdate()
+    :let s:swank_package=a:pack
+    call SlimvCommand( 'python swank_inspect("' . a:s . '")' )
+endfunction
+
+function! SlimvNWREPL()
+    call SlimvCommandNewWindow( ':call SlimvOpenReplBuffer()' )
+endfunction
+
 " Inspect symbol under cursor
-function! SlimvInspect()
+function! SlimvInspect(newwindow)
     if !SlimvConnectSwank()
         return
     endif
@@ -2901,14 +3003,25 @@ function! SlimvInspect()
         let s = input( 'Inspect in frame ' . frame . ' (evaluated): ', sym )
         if s != ''
             let s:inspect_path = [s]
-            call SlimvCommand( 'python swank_inspect_in_frame("' . s . '", ' . frame . ')' )
-            call SlimvRefreshReplBuffer()
+            " TODO: passing the frame to a different connection
+            "if a:newwindow
+            "    call SlimvCommandNewWindow( ':call SlimvInspectInFrame_do2("' . s . '", ' . s:swank_current_thread . ', ' . frame . ')' )
+            "else
+            call SlimvInspectInFrame_do(s, frame)
+            "endif
         endif
     else
         let s = input( 'Inspect: ', SlimvSelectSymbolExt() )
         if s != ''
             let s:inspect_path = [s]
-            call SlimvCommandUsePackage( 'python swank_inspect("' . s . '")' )
+            call SlimvFindPackage()
+            if a:newwindow
+                call SlimvCommandNewWindow( ':call SlimvInspect_do("' . s . '", "' . s:swank_package . '")' )
+            else
+                let s:refresh_disabled = 1
+                call SlimvInspect_do(s, s:swank_package)
+                let s:refresh_disabled = 0
+            endif
         endif
     endif
 endfunction
@@ -3527,7 +3640,7 @@ call s:MenuMap( 'Slim&v.De&bugging.U&ntrace-All',               g:slimv_leader.'
 call s:MenuMap( 'Slim&v.De&bugging.Set-&Breakpoint',            g:slimv_leader.'B',  g:slimv_leader.'db',  ':call SlimvBreak()<CR>' )
 call s:MenuMap( 'Slim&v.De&bugging.Break-on-&Exception',        g:slimv_leader.'E',  g:slimv_leader.'de',  ':call SlimvBreakOnException()<CR>' )
 call s:MenuMap( 'Slim&v.De&bugging.Disassemb&le\.\.\.',         g:slimv_leader.'l',  g:slimv_leader.'dd',  ':call SlimvDisassemble()<CR>' )
-call s:MenuMap( 'Slim&v.De&bugging.&Inspect\.\.\.',             g:slimv_leader.'i',  g:slimv_leader.'di',  ':call SlimvInspect()<CR>' )
+call s:MenuMap( 'Slim&v.De&bugging.&Inspect\.\.\.',             g:slimv_leader.'i',  g:slimv_leader.'di',  ':call SlimvInspect(0)<CR>' )
 call s:MenuMap( 'Slim&v.De&bugging.&Find-Definition\.\.\.',     g:slimv_leader.'»',  g:slimv_leader.'df',  ':call SlimvFindDefinitions()<CR>' )
 call s:MenuMap( 'Slim&v.De&bugging.-SldbSep-',                  '',                  '',                   ':' )
 call s:MenuMap( 'Slim&v.De&bugging.&Abort',                     g:slimv_leader.'a',  g:slimv_leader.'da',  ':call SlimvDebugAbort()<CR>' )
@@ -3577,6 +3690,8 @@ call s:MenuMap( 'Slim&v.&Repl.Interrup&t-Lisp-Process',         g:slimv_leader.'
 call s:MenuMap( 'Slim&v.&Repl.Clear-&REPL',                     g:slimv_leader.'-',  g:slimv_leader.'-',   ':call SlimvClearReplBuffer()<CR>' )
 call s:MenuMap( 'Slim&v.&Repl.&Quit-REPL',                      g:slimv_leader.'Q',  g:slimv_leader.'rq',  ':call SlimvQuitRepl()<CR>' )
 
+call s:MenuMap( 'Slim&v.&New-Window.&REPL',                     g:slimv_leader.'Nr', g:slimv_leader.'nr',  ':call SlimvNWREPL()<CR>' )
+call s:MenuMap( 'Slim&v.&New-Window.&Inspect',                  g:slimv_leader.'Ni', g:slimv_leader.'ni',  ':call SlimvInspect(1)<CR>' )
 
 " =====================================================================
 "  Slimv menu
