@@ -1058,7 +1058,7 @@ function SlimvOpenSldbBuffer()
     call SlimvOpenBuffer( g:slimv_sldb_name )
 
     " Add keybindings valid only for the SLDB buffer
-    noremap  <buffer> <silent>        <CR>   :call SlimvHandleEnterSldb()<CR>
+    noremap  <buffer> <silent>        <CR>   :call SlimvHandleEnterSldb(0)<CR>
     if g:slimv_keybindings == 1
         execute 'noremap <buffer> <silent> ' . g:slimv_leader.'a      :call SlimvDebugAbort()<CR>'
         execute 'noremap <buffer> <silent> ' . g:slimv_leader.'q      :call SlimvDebugQuit()<CR>'
@@ -1577,6 +1577,9 @@ endfunction
 
 " Return missing parens, double quotes, etc to properly close form
 function! s:CloseForm( form )
+    if SlimvGetFiletype() =~ 'r'
+        return ""
+    endif
     let end = ''
     let i = 0
     while i < len( a:form )
@@ -2220,9 +2223,9 @@ function! SlimvHandleEnterRepl()
 endfunction
 
 " Handle normal mode 'Enter' keypress in the SLDB buffer
-function! SlimvHandleEnterSldb()
+function! SlimvHandleEnterSldb( always )
     let line = getline('.')
-    if s:sldb_level >= 0
+    if a:always || s:sldb_level >= 0
         " Check if Enter was pressed in a section printed by the SWANK debugger
         " The source specification is within a fold, so it has to be tested first
         let mlist = matchlist( line, '^\s\+in "\=\(.*\)"\= \(line\|byte\) \(\d\+\)$' )
@@ -2255,7 +2258,7 @@ function! SlimvHandleEnterSldb()
                     " Not implemented for CLISP or scheme
                     silent execute 'python swank_frame_source_loc("' . item . '")'
                 endif
-                if SlimvGetFiletype() == 'lisp' && g:slimv_impl != 'clisp' && g:slimv_impl != 'allegro'
+                if SlimvGetFiletype() == 'lisp' && g:slimv_impl != 'clisp' && g:slimv_impl != 'allegro' && g:slimv_impl != 'ecl'
                     " Not implemented for CLISP or other lisp dialects
                     silent execute 'python swank_frame_call("' . item . '")'
                 endif
@@ -3443,7 +3446,10 @@ function! SlimvComplete( base )
     " No completion yet, try to fetch it from the Hyperspec database
     let res = []
     let symbol = SlimvHyperspecLookup( a:base, 0, 1 )
-    if symbol == []
+    if type(symbol) == 3 && symbol == []
+        return []
+    endif
+    if type(symbol) == 1 && symbol == ""
         return []
     endif
     call sort( symbol )
@@ -3585,6 +3591,10 @@ function! SlimvInitBuffer()
         inoremap <silent> <buffer> <Tab>      <C-R>=SlimvHandleTab()<CR>
     endif
     inoremap <silent> <buffer> <S-Tab>    <C-R>=pumvisible() ? "\<lt>C-P>" : "\<lt>S-Tab>"<CR>
+
+    " Go to tag, removing a package name.
+    execute 'noremap <buffer> <silent>         <C-]>                  :execute ":tag " . matchstr(SlimvSelectSymbol(), "[^:]\\+$")<CR>'
+    execute 'noremap <buffer> <silent>         g]                     :execute ":ts  " . matchstr(SlimvSelectSymbol(), "[^:]\\+$")<CR>'
 
     " Setup balloonexp to display symbol description
     if g:slimv_balloon && has( 'balloon_eval' )

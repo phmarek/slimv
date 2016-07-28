@@ -18,6 +18,7 @@ import socket
 import time
 import select
 import string
+import os
 
 input_port      = 4005
 output_port     = 4006
